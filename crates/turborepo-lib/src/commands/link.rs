@@ -17,6 +17,7 @@ use dirs_next::home_dir;
 use rand::Rng;
 use thiserror::Error;
 use turborepo_api_client::{CacheClient, Client};
+use turborepo_auth::origin_with_path_or_vercel;
 use turborepo_gitignore::ensure_turbo_is_gitignored;
 use turborepo_json_rewrite::{set_path, unset_path, RewriteError};
 #[cfg(not(test))]
@@ -87,6 +88,7 @@ pub(crate) const REMOTE_CACHING_URL: &str =
 /// returns: Result<(), Error>
 pub(crate) async fn verify_caching_enabled<'a>(
     api_client: &(impl Client + CacheClient),
+    login_url: &str,
     team_id: &str,
     token: &turborepo_api_client::SecretString,
     selected_team: Option<SelectedTeam<'a>>,
@@ -107,15 +109,17 @@ pub(crate) async fn verify_caching_enabled<'a>(
             if should_enable {
                 match selected_team {
                     Some(SelectedTeam::Team(team)) if team.is_owner() => {
-                        let url =
-                            format!("https://vercel.com/teams/{}/settings/billing", team.slug);
+                        let url = origin_with_path_or_vercel(
+                            login_url,
+                            &format!("teams/{}/settings/billing", &team.slug),
+                        );
 
                         enable_caching(&url)?;
                     }
                     Some(SelectedTeam::User) => {
-                        let url = "https://vercel.com/account/billing";
+                        let url = origin_with_path_or_vercel(login_url, "account/billing");
 
-                        enable_caching(url)?;
+                        enable_caching(&url)?;
                     }
                     None => {
                         let team = api_client
@@ -123,8 +127,10 @@ pub(crate) async fn verify_caching_enabled<'a>(
                             .await
                             .map_err(|err| Error::TeamRequest(err, team_id.to_string()))?
                             .ok_or_else(|| Error::TeamNotFound(team_id.to_string()))?;
-                        let url =
-                            format!("https://vercel.com/teams/{}/settings/billing", team.slug);
+                        let url = origin_with_path_or_vercel(
+                            login_url,
+                            &format!("teams/{}/settings/billing", &team.slug),
+                        );
 
                         enable_caching(&url)?;
                     }
@@ -211,7 +217,14 @@ pub async fn link(
         SelectedTeam::Team(team) => team.id.as_str(),
     };
 
-    verify_caching_enabled(&api_client, team_id, &token, Some(selected_team.clone())).await?;
+    verify_caching_enabled(
+        &api_client,
+        base.opts.api_client_opts.login_url.as_str(),
+        team_id,
+        &token,
+        Some(selected_team.clone()),
+    )
+    .await?;
 
     let local_config_path = base.local_config_path();
     let before = local_config_path

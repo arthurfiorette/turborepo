@@ -6,7 +6,7 @@ use tracing::warn;
 use turborepo_api_client::{CacheClient, Client, TokenClient};
 use turborepo_ui::{BOLD, ColorConfig, start_spinner};
 
-use crate::{Error, LoginOptions, Token, error, ui};
+use crate::{Error, LoginOptions, Token, error, origin_with_path_or_vercel, ui};
 
 const DEFAULT_HOST_NAME: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 9789;
@@ -98,6 +98,8 @@ pub async fn sso_login<T: Client + TokenClient + CacheClient>(
     let port = sso_login_callback_port.unwrap_or(DEFAULT_PORT);
     let redirect_url = format!("http://{DEFAULT_HOST_NAME}:{port}");
     let mut login_url = Url::parse(login_url_configuration)?;
+    let notification_base =
+        origin_with_path_or_vercel(login_url_configuration, "notifications/cli-login/turbo/");
 
     login_url
         .path_segments_mut()
@@ -123,7 +125,11 @@ pub async fn sso_login<T: Client + TokenClient + CacheClient>(
 
     let token_cell = Arc::new(OnceCell::new());
     login_server
-        .run(port, crate::LoginType::SSO, token_cell.clone())
+        .run(
+            port,
+            crate::LoginType::SSO { notification_base },
+            token_cell.clone(),
+        )
         .await?;
     spinner.finish_and_clear();
 

@@ -5,13 +5,13 @@ use async_trait::async_trait;
 use axum::{Router, extract::Query, response::Redirect, routing::get};
 use serde::Deserialize;
 use tokio::sync::OnceCell;
-use url::Url;
+use url::{ParseError, Url};
 
-use crate::Error;
+use crate::{Error, origin_with_path_or_vercel};
 
 pub enum LoginType {
     Basic { success_redirect: String },
-    SSO,
+    SSO { notification_base: String },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -73,17 +73,22 @@ impl LoginServer for DefaultLoginServer {
                     .await
                     .expect("failed to start one-shot server");
             }
-            LoginType::SSO => {
+            LoginType::SSO { notification_base } => {
                 let app = Router::new().route(
                     "/",
-                    get(|sso_payload: Query<SsoPayload>| async move {
-                        let (token, location) = get_token_and_redirect(sso_payload.0).unwrap();
-                        if let Some(token) = token {
-                            // If token is already set, it's not a big deal, so we ignore the error.
-                            let _ = login_token.set(token);
+                    get(move |sso_payload: Query<SsoPayload>| {
+                        let notification_base = notification_base.clone();
+                        async move {
+                            let (token, location) =
+                                get_token_and_redirect(sso_payload.0, &notification_base).unwrap();
+                            if let Some(token) = token {
+                                // If token is already set, it's not a big deal, so we ignore the
+                                // error.
+                                let _ = login_token.set(token);
+                            }
+                            route_handle.shutdown();
+                            Redirect::to(location.as_str())
                         }
-                        route_handle.shutdown();
-                        Redirect::to(location.as_str())
                     }),
                 );
 
@@ -99,17 +104,19 @@ impl LoginServer for DefaultLoginServer {
     }
 }
 
-fn get_token_and_redirect(payload: SsoPayload) -> Result<(Option<String>, Url), Error> {
-    let location_stub = "https://vercel.com/notifications/cli-login/turbo/";
+fn get_token_and_redirect(
+    payload: SsoPayload,
+    notification_base: &str,
+) -> Result<(Option<String>, Url), Error> {
     if let Some(login_error) = payload.login_error {
-        let mut url = Url::parse(&format!("{location_stub}failed"))?;
+        let mut url = notification_url(notification_base, "failed")?;
         url.query_pairs_mut()
             .append_pair("loginError", login_error.as_str());
         return Ok((None, url));
     }
 
     if let Some(sso_email) = payload.sso_email {
-        let mut url = Url::parse(&format!("{location_stub}incomplete"))?;
+        let mut url = notification_url(notification_base, "incomplete")?;
         url.query_pairs_mut()
             .append_pair("ssoEmail", sso_email.as_str());
         if let Some(team_name) = payload.team_name {
@@ -123,12 +130,19 @@ fn get_token_and_redirect(payload: SsoPayload) -> Result<(Option<String>, Url), 
 
         return Ok((None, url));
     }
-    let mut url = Url::parse(&format!("{location_stub}success"))?;
+    let mut url = notification_url(notification_base, "success")?;
     if let Some(email) = payload.email {
         url.query_pairs_mut().append_pair("email", email.as_str());
     }
 
     Ok((payload.token, url))
+}
+
+fn notification_url(notification_base: &str, status: &str) -> Result<Url, ParseError> {
+    Url::parse(&format!(
+        "{}{status}",
+        origin_with_path_or_vercel(notification_base, "notifications/cli-login/turbo/")
+    ))
 }
 
 #[cfg(test)]
@@ -137,8 +151,10 @@ mod tests {
 
     #[test]
     fn test_get_token_and_redirect() {
+        let notification_base = "https://vercel.com/notifications/cli-login/turbo/";
+
         assert_eq!(
-            get_token_and_redirect(SsoPayload::default()).unwrap(),
+            get_token_and_redirect(SsoPayload::default(), notification_base).unwrap(),
             (
                 None,
                 Url::parse("https://vercel.com/notifications/cli-login/turbo/success").unwrap()
@@ -146,10 +162,13 @@ mod tests {
         );
 
         assert_eq!(
-            get_token_and_redirect(SsoPayload {
-                login_error: Some("error".to_string()),
-                ..SsoPayload::default()
-            })
+            get_token_and_redirect(
+                SsoPayload {
+                    login_error: Some("error".to_string()),
+                    ..SsoPayload::default()
+                },
+                notification_base
+            )
             .unwrap(),
             (
                 None,
@@ -161,10 +180,13 @@ mod tests {
         );
 
         assert_eq!(
-            get_token_and_redirect(SsoPayload {
-                sso_email: Some("email".to_string()),
-                ..SsoPayload::default()
-            })
+            get_token_and_redirect(
+                SsoPayload {
+                    sso_email: Some("email".to_string()),
+                    ..SsoPayload::default()
+                },
+                notification_base
+            )
             .unwrap(),
             (
                 None,
@@ -176,11 +198,15 @@ mod tests {
         );
 
         assert_eq!(
-            get_token_and_redirect(SsoPayload {
-                sso_email: Some("email".to_string()),
-                team_name: Some("team".to_string()),
-                ..SsoPayload::default()
-            }).unwrap(),
+            get_token_and_redirect(
+                SsoPayload {
+                    sso_email: Some("email".to_string()),
+                    team_name: Some("team".to_string()),
+                    ..SsoPayload::default()
+                },
+                notification_base
+            )
+            .unwrap(),
             (
                 None,
                 Url::parse("https://vercel.com/notifications/cli-login/turbo/incomplete?ssoEmail=email&teamName=team")
@@ -189,10 +215,13 @@ mod tests {
         );
 
         assert_eq!(
-            get_token_and_redirect(SsoPayload {
-                token: Some("token".to_string()),
-                ..SsoPayload::default()
-            })
+            get_token_and_redirect(
+                SsoPayload {
+                    token: Some("token".to_string()),
+                    ..SsoPayload::default()
+                },
+                notification_base
+            )
             .unwrap(),
             (
                 Some("token".to_string()),

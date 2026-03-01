@@ -10,6 +10,7 @@ mod auth;
 mod error;
 mod login_server;
 mod ui;
+mod url_utils;
 
 pub use auth::*;
 pub use error::Error;
@@ -18,6 +19,7 @@ use serde::Deserialize;
 use turbopath::AbsoluteSystemPath;
 use turborepo_api_client::{CacheClient, Client, SecretString, TokenClient};
 use turborepo_vercel_api::{User, token::ResponseTokenMetadata};
+pub use url_utils::{origin_or_vercel, origin_with_path_or_vercel};
 
 pub struct TeamInfo<'a> {
     pub id: &'a str,
