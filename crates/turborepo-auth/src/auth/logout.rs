@@ -57,7 +57,6 @@ impl<T: TokenClient> LogoutOptions<T> {
     }
 
     async fn remove_tokens(&self) -> Result<(), Error> {
-        #[cfg(test)]
         if let Some(path) = &self.path {
             return self.try_remove_token(path).await;
         }

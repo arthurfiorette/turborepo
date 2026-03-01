@@ -1,6 +1,7 @@
 mod manual;
 
 use manual::login_manual;
+use reqwest::Url;
 use turborepo_api_client::APIClient;
 use turborepo_auth::{
     login as auth_login, sso_login as auth_sso_login, DefaultLoginServer, LoginOptions, Token,
@@ -136,13 +137,17 @@ impl<'a> Drop for LoginTelemetry<'a> {
     }
 }
 
-// Writes a given token to the global turbo configuration file
+// Writes a given token to the provider-appropriate turbo configuration file.
 fn write_token(base: &CommandBase, token: Token) -> Result<(), Error> {
-    let global_config_path = base.global_config_path()?;
-    let before = global_config_path
+    let config_path = if is_vercel_login_url(base.opts.api_client_opts.login_url.as_str()) {
+        base.global_config_path()?
+    } else {
+        base.local_config_path()
+    };
+    let before = config_path
         .read_existing_to_string()
         .map_err(|e| config::Error::FailedToReadConfig {
-            config_path: global_config_path.clone(),
+            config_path: config_path.clone(),
             error: e,
         })?
         .unwrap_or_else(|| String::from("{}"));
@@ -152,19 +157,26 @@ fn write_token(base: &CommandBase, token: Token) -> Result<(), Error> {
         &format!("\"{}\"", token.into_inner().expose()),
     )?;
 
-    global_config_path
+    config_path
         .ensure_dir()
         .map_err(|e| config::Error::FailedToSetConfig {
-            config_path: global_config_path.clone(),
+            config_path: config_path.clone(),
             error: e,
         })?;
 
-    global_config_path
+    config_path
         .create_with_contents_secret(after)
         .map_err(|e| config::Error::FailedToSetConfig {
-            config_path: global_config_path.clone(),
+            config_path: config_path.clone(),
             error: e,
         })?;
 
     Ok(())
+}
+
+fn is_vercel_login_url(login_url: &str) -> bool {
+    Url::parse(login_url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_lowercase))
+        .is_some_and(|host| host == "vercel.com" || host.ends_with(".vercel.com"))
 }

@@ -5,7 +5,6 @@ mod sso;
 pub use login::*;
 pub use logout::*;
 pub use sso::*;
-#[cfg(test)]
 use turbopath::AbsoluteSystemPathBuf;
 use turborepo_api_client::{CacheClient, Client, TokenClient};
 use turborepo_ui::ColorConfig;
@@ -52,8 +51,7 @@ pub struct LogoutOptions<T> {
     pub api_client: T,
     /// If we should invalidate the token on the server.
     pub invalidate: bool,
-    /// Path override for testing
-    #[cfg(test)]
+    /// Optional path override for token storage location.
     pub path: Option<AbsoluteSystemPathBuf>,
 }
 
